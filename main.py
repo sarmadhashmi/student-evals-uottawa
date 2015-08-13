@@ -1,5 +1,7 @@
- from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup
+from ghost import Ghost
 from robobrowser import RoboBrowser
+import sys
 from time import sleep
 # MAYBE? CSV OUTPUT
 # rating by prof
@@ -9,38 +11,70 @@ from time import sleep
 
 class Infoweb(object):
     def __init__(self, username, password):
-        self.br = RoboBrowser()
+        #self.br = RoboBrowser(parser="html.parser", history=True, tries=3, timeout=30)
+        self.ghost = Ghost()
+        self.br = self.ghost.start(download_images=False, wait_timeout=30)
         self.username = username
         self.password = password
         self.loggedIn = False
 
     def login(self):
-        self.br.open("https://uozone2.uottawa.ca/user/login")
-        login_form = self.br.get_form(id="user-login-form")
-        login_form["name"] = self.username
-        login_form['pass'] = self.password
-        self.br.submit_form(login_form)
-        user = self.br.find('span', {'class':'username'}).text
+        self.br.open("https://uozone2.uottawa.ca/user/login", timeout=30)
+        self.br.fill("form[id=user-login-form]", {
+            "name": self.username,
+            "pass": self.password
+        })
+        self.br.call("form[id=user-login-form]", "submit", expect_loading=True)
+        #login_form = self.br.get_form(id="user-login-form")
+        #login_form["name"] = self.username
+        #login_form['pass'] = self.password
+        #self.br.submit_form(login_form)
+        #user = self.br.find('span', {'class':'username'}).text
+        html = BeautifulSoup(self.br.content, "html.parser")
+        user = html.find('span', {'class': 'username'}).text
         if user == 'Anonymous':
             raise ValueError("Incorrect credentials provided.")
         else:
             self.loggedIn = True
             print("Logged in as " + user)
 
+    def fieldToMap(self, html, name, select=False):
+        ret = []
+        if select:
+            sel = html.find('select', attrs={'name': name})
+            if sel:
+                for opt in sel.find_all('option'):
+                    txt = opt.txt.encode("utf-8").strip()
+                    val = opt["value"]
+                    if val is not None:
+                        ret.append({"name": txt, "value": val.encode("utf-8").strip()})
+                    else:
+                        ret.append({"name": txt, "value": txt})
+        else:
+            inputs = html.find_all('input', attrs={'name': name})
+            if name == 'sess-':
+                ret = [{"name": i.text.strip().split()[0].encode("utf-8"), "value": i["value"].encode("utf-8").strip()} for i in inputs]
+            else:
+                ret = [{"name": i.text.encode("utf-8").strip(), "value": i["value"].encode("utf-8").strip()} for i in inputs]
+        return ret
+
     def goToEvaluations(self):
         assert self.loggedIn
-        self.br.open("https://uozone2.uottawa.ca/apps/s-report")
-        html = self.br
-        if "Evaluation of Teaching and Courses" not in html.parsed:
+        self.br.open("https://uozone2.uottawa.ca/apps/s-report", timeout=30)
+        html = BeautifulSoup(self.br.content, "html.parser")
+        if "Teacher Course Evaluation" != html.find('title').text:
             raise LookupError("Site is down.")
-        sessions = html.findAll('input', {'name': 'sess-'})
-        years = [x.text for x in html.find('select', {'name': 'ctury'}).find_all('option')]
-        indices = html.findAll('input', {'name': 'itype'})
-        evalTypes = html.findAll('input', {'name': 'eval-'})
-        faculties = [{'name': x.name, 'value': x['value']} for x in html.find('select', {'name': 'ctury'}).find_all('option')]
+        sessions = self.fieldToMap(html, 'sess-')
+        years = self.fieldToMap(html, 'ctury', True)
+        indices = self.fieldToMap(html, 'itype')
+        evalTypes = self.fieldToMap(html, 'eval-')
+        faculties = self.fieldToMap(html, 'facul', True)
+        print sessions
         print years
-        print faculties
         print indices
+        print evalTypes
+        print faculties
+
 
     # Search by prof and/or course
     def getEvaluations(self, prof, course):
