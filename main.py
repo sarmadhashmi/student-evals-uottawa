@@ -1,16 +1,7 @@
 from bs4 import BeautifulSoup
 from collections import OrderedDict
-from selenium import webdriver
-from time import sleep
-import urllib, urllib2, re, json
-import cookielib
-import requests
+import re, requests, getpass
 
-# MAYBE? CSV OUTPUT
-# rating by prof
-# prof, faculty, session + year, course code,
-# search for prof
-# get sessions, years, indexes(prof), evaltypes, faculties here
 DEFAULT_TIMEOUT = 60
 class Infoweb(object):
     def __init__(self, username, password):
@@ -64,7 +55,7 @@ class Infoweb(object):
                 ret[i["value"].encode("utf-8").strip()] = txt.encode("utf-8").strip()
         return ret
 
-    def goToEvaluations(self):
+    def getGlobalEvaluationValues(self):
         assert self.loggedIn
         r = self.session.get("https://uozone2.uottawa.ca/apps/s-report")
         assert r.url == 'https://web.uottawa.ca/uopr/WSN003;Lang=EN'
@@ -77,9 +68,11 @@ class Infoweb(object):
         self.formOptions["indices"] = self.fieldToMap(html, 'itype')
         self.formOptions["evalTypes"] = self.fieldToMap(html, 'eval-')
         self.formOptions["faculties"] = self.fieldToMap(html, 'facul', True)
+        return html
 
-        #Prof search
-        results = self._getAllEvaluationsForProfessor(html, 'GENIE', 'Bochmann')
+    def searchByProf(self, html, faculty, prof_name):
+        assert isinstance(html, BeautifulSoup)
+        results = self._getAllEvaluationsForProfessor(html, faculty, prof_name)
         if len(results) == 0:
             return
         f = open('test.txt', 'w+')
@@ -277,12 +270,81 @@ class Infoweb(object):
 
     def close(self):
         self.logout()
+from prompt_toolkit.validation import Validator, ValidationError
+
+class CourseCodeValidator(Validator):
+    def validate(self, document):
+        pattern = re.compile()
+        if not pattern.match(course_code):
+            raise ValidationError(message='Not a valid course code.', index=len(document.text))  # Move cursor to end of input.
+
+class ListValidator(Validator):
+    def __init__(self, options):
+        self.valid_options = options
+        super(ListValidator, self)
+
+    def validate(self, document):
+        if document not in self.valid_options:
+            raise ValidationError(message='Invalid option.', index=len(document.text))  # Move cursor to end of input.
+
+def get_input_and_validate(prompt, regex=None, is_password=False, is_confirm=False):
+    pattern = None
+    if is_confirm:
+        regex = ['y', 'Y', 'n', 'N']
+    if regex and isinstance(regex, list):
+        pattern = re.compile('^[' + '|'.join(regex) + ']$')
+    elif regex:
+        pattern = re.compile(regex)
+
+    success = False
+    while not success:
+        if is_password:
+            tmp = getpass.getpass(prompt)
+        else:
+            tmp = raw_input(prompt)
+        if not regex or (pattern and pattern.match(tmp)):
+            success = True
+        else:
+            print 'Invalid option entered.'
+    return tmp
 
 if __name__ == '__main__':
-    try:
-        w = Infoweb('username', 'password')
-        w.login()
-        w.goToEvaluations()
-    finally:
-        w.close()
+    # Login
+    print 'PRESS CTRL+D or COMMAND+D at any time to exit.'
+    username = get_input_and_validate('Enter your uoZone or InfoWeb username: ')
+    password = get_input_and_validate('Enter your uoZone or InfoWeb password: ', is_password=True)
+    w = Infoweb(username, password)
+    w.login()
+
+    # Get details if successful login
+    confirmed = False
+    while not confirmed:
+        print '\n'
+        mode = get_input_and_validate('Would you like to search by Course Code (C) or Professor Name (T): ', ['c', 'C', 't', 'T'])
+        if mode == 'T':
+            prof_name = get_input_and_validate('Enter the name of the professor that you would like the evaluations for: ')
+        else:
+            course_code = get_input_and_validate('Enter the course code of the course that you would like the evaluations for: ', "^[A-Z]{3}[0-9]{4}$")
+
+        print '\nPlease confirm your search details: '
+        if mode == 'T':
+            print 'Search by: Professor'
+            print 'Search term: ' + prof_name
+        else:
+            print 'Search by: Course Code'
+            print 'Search term: ' + course_code
+        confirmed = get_input_and_validate("\nWould you like to search with the above criteria? (Enter y or n): ", is_confirm=True) == 'y'
+
+    # Confirmed everything, time to get the stats
+    exit()
+    w = Infoweb(username, password)
+    w.login()
+    print 'Searching...'
+    #try:
+     #   w = Infoweb('username', 'password')
+      #  w.login()
+       # w.getGlobalEvaluationValues()
+    #finally:
+     #   w.close()
+
 
